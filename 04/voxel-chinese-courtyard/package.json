@@ -1,0 +1,19 @@
+{
+  "name": "voxel-chinese-courtyard",
+  "private": true,
+  "version": "1.0.0",
+  "description": "体素风格中国古典建筑群 · Three.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173",
+    "selftest": "node scripts/selftest.mjs"
+  },
+  "dependencies": {
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "vite": "^7.3.6"
+  }
+}

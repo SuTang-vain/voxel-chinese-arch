@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>体素中式古典建筑群 · Voxel Chinese Temple</title>
+<style>
+  :root {
+    --gold: #e8bf63;
+    --red: #a93a2c;
+    --ink: rgba(16, 14, 12, 0.72);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1017; }
+  body {
+    font-family: "Songti SC", "STSong", "Source Han Serif SC", "Noto Serif SC", Georgia, serif;
+    color: #f3ecdf;
+    -webkit-font-smoothing: antialiased;
+  }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  .panel {
+    position: fixed;
+    background: var(--ink);
+    border: 1px solid rgba(232, 191, 99, 0.35);
+    border-radius: 8px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    box-shadow: 0 6px 26px rgba(0, 0, 0, 0.45);
+  }
+
+  /* 标题 */
+  #title { top: 18px; left: 18px; padding: 14px 18px 12px; max-width: 330px; }
+  #title h1 {
+    margin: 0 0 4px; font-size: 20px; letter-spacing: 3px; font-weight: 600;
+    color: #fff6e2; text-shadow: 0 2px 10px rgba(0,0,0,.6);
+  }
+  #title h1 span { color: var(--gold); }
+  #title p { margin: 3px 0 0; font-size: 12px; line-height: 1.7; color: #cbbfa8; letter-spacing: .6px; }
+  #title .seal {
+    display: inline-block; margin-left: 6px; padding: 1px 5px; font-size: 10px;
+    border: 1px solid var(--red); color: #ffd9c9; background: rgba(169,58,44,.35);
+    border-radius: 3px; letter-spacing: 1px;
+  }
+
+  /* 控制条 */
+  #hud { top: 18px; right: 18px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 176px; }
+  #hud .row { display: flex; gap: 6px; align-items: center; }
+  #hud .lbl { font-size: 11px; color: #cbbfa8; letter-spacing: 2px; }
+  #times { display: flex; gap: 5px; }
+  #times button, #rotBtn {
+    flex: 1; cursor: pointer; font-family: inherit; font-size: 12px; letter-spacing: 1px;
+    padding: 5px 4px; color: #e9dfcb; background: rgba(255,255,255,.06);
+    border: 1px solid rgba(232,191,99,.28); border-radius: 5px; transition: .18s;
+  }
+  #times button:hover, #rotBtn:hover { background: rgba(232,191,99,.18); }
+  #times button.on, #rotBtn.on {
+    background: linear-gradient(180deg, rgba(232,191,99,.85), rgba(200,150,50,.85));
+    color: #35240c; border-color: #f0d79a; font-weight: 700;
+  }
+
+  /* 性能 / 统计 */
+  #stats { bottom: 18px; left: 18px; padding: 9px 13px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; line-height: 1.75; color: #d9e2c9; }
+  #stats b { color: var(--gold); font-weight: 600; }
+  #voxInfo { color: #9fb08c; }
+
+  /* 操作提示 */
+  #hint { bottom: 18px; right: 18px; padding: 9px 14px; font-size: 11.5px; color: #cbbfa8; letter-spacing: .8px; }
+  #hint kbd {
+    font-family: inherit; padding: 1px 6px; margin: 0 2px; border-radius: 4px;
+    border: 1px solid rgba(232,191,99,.4); background: rgba(255,255,255,.07); color: #f0e6d2;
+  }
+
+  /* 载入 */
+  #loading {
+    position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px;
+    background: radial-gradient(circle at 50% 45%, #2a2118, #0d1017 70%);
+    transition: opacity .8s ease; letter-spacing: 4px;
+  }
+  #loading.hide { opacity: 0; pointer-events: none; }
+  #loading .t { font-size: 17px; color: var(--gold); }
+  #loading .s { font-size: 11px; color: #8d8272; letter-spacing: 2px; }
+  #loading .ring {
+    width: 44px; height: 44px; border-radius: 50%;
+    border: 2px solid rgba(232,191,99,.25); border-top-color: var(--gold);
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 720px) {
+    #title { max-width: 200px; padding: 10px 12px; }
+    #title h1 { font-size: 15px; letter-spacing: 2px; }
+    #title p { display: none; }
+    #hint { display: none; }
+    #stats { font-size: 10px; }
+  }
+</style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="title" class="panel">
+    <h1>紫微宫 <span>·</span> 体素中式古典建筑群<span class="seal">VOXEL</span></h1>
+    <p>中轴对称院落：山门 → 泮池石桥 → 庭院 → 主殿，两侧钟鼓楼与配殿拱卫，轴末立宝塔。<br />
+       重檐庑殿 · 歇山 · 攒尖，飞檐翘角，斗拱额枋，金瓦红墙。</p>
+  </div>
+
+  <div id="hud" class="panel">
+    <div class="row"><span class="lbl">光影</span><span id="envName" style="color:#e8bf63;font-size:12px;letter-spacing:2px;">黄昏</span></div>
+    <div id="times"></div>
+    <div class="row"><button id="rotBtn">自动环绕</button></div>
+  </div>
+
+  <div id="stats" class="panel">
+    <div><b id="fps">— FPS</b></div>
+    <div id="voxInfo"></div>
+  </div>
+
+  <div id="hint" class="panel">
+    <kbd>拖拽</kbd> 旋转 · <kbd>滚轮</kbd> 缩放 · <kbd>空格</kbd> 环绕 · <kbd>R</kbd> 复位 · <kbd>1</kbd>–<kbd>4</kbd> 晨昏
+  </div>
+
+  <div id="loading">
+    <div class="ring"></div>
+    <div class="t">正在营造 · 体素砖瓦</div>
+    <div class="s">BUILDING THE VOXEL TEMPLE</div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>体素·中国古典建筑群</title>
+  <style>
+    html, body { margin: 0; padding: 0; overflow: hidden; background: #1a1a1a; }
+    #app { width: 100vw; height: 100vh; }
+    .hud {
+      position: fixed; left: 16px; top: 14px; color: #fff;
+      font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+      text-shadow: 0 1px 4px rgba(0,0,0,.55); pointer-events: none; user-select: none;
+    }
+    .hud h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: 2px; }
+    .hud p { font-size: 12px; margin: 0; opacity: .85; }
+    #fps {
+      position: fixed; right: 14px; top: 12px; color: #ffe9b0;
+      font: 12px/1.4 Menlo, monospace; text-shadow: 0 1px 3px rgba(0,0,0,.6);
+      pointer-events: none; user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div class="hud">
+    <h1>体素 · 中国古典建筑群</h1>
+    <p>拖拽旋转 / 滚轮缩放 / 右键平移</p>
+  </div>
+  <div id="fps"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>体素中式古建群 · Voxel Chinese Courtyard</title>
+    <style>
+      :root {
+        --gold: #e8c469;
+        --ink: #12100e;
+        --paper: rgba(22, 19, 16, 0.62);
+        --line: rgba(232, 196, 105, 0.35);
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0d0f14; }
+      body {
+        font-family: "Songti SC", "STSong", "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
+        color: #f2ece0;
+      }
+      #app { position: fixed; inset: 0; }
+      canvas { display: block; }
+
+      /* ---------- HUD ---------- */
+      .hud {
+        position: fixed;
+        pointer-events: none;
+        z-index: 10;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);
+      }
+      #title {
+        top: 20px; left: 26px;
+        padding: 14px 18px 12px;
+        background: linear-gradient(180deg, rgba(20,17,14,0.72), rgba(20,17,14,0.35));
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--gold);
+        backdrop-filter: blur(6px);
+        border-radius: 2px;
+        max-width: 360px;
+      }
+      #title h1 {
+        margin: 0 0 6px; font-size: 21px; letter-spacing: 4px; font-weight: 600;
+        color: #f6e3b4;
+      }
+      #title p { margin: 0; font-size: 12px; line-height: 1.7; color: #cdc4b4; letter-spacing: 1px; }
+      #title .poem { margin-top: 8px; font-size: 11.5px; color: #a99a80; font-style: italic; letter-spacing: 0.5px; }
+
+      #legend {
+        left: 26px; bottom: 22px;
+        padding: 10px 14px;
+        background: var(--paper);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 2px;
+        font-size: 11.5px; line-height: 1.9; letter-spacing: 1px; color: #d6cdbd;
+        backdrop-filter: blur(6px);
+      }
+      #legend b { color: var(--gold); font-weight: 600; }
+      kbd {
+        display: inline-block; min-width: 16px; text-align: center;
+        padding: 0 4px; border: 1px solid rgba(255,255,255,0.25); border-bottom-width: 2px;
+        border-radius: 3px; font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+        color: #f0e6d2; background: rgba(255,255,255,0.06);
+      }
+
+      #stats {
+        right: 22px; top: 20px; text-align: right;
+        font-family: ui-monospace, Menlo, monospace; font-size: 11px; line-height: 1.8;
+        color: #cfc7b8; padding: 10px 14px; background: var(--paper);
+        border: 1px solid rgba(255,255,255,0.08); border-radius: 2px;
+        backdrop-filter: blur(6px);
+      }
+      #stats span { color: var(--gold); }
+
+      #timebar {
+        right: 22px; bottom: 22px; display: flex; gap: 8px; pointer-events: auto;
+      }
+      #timebar button {
+        pointer-events: auto; cursor: pointer;
+        font-family: inherit; font-size: 12px; letter-spacing: 2px;
+        color: #e6dcc7; background: rgba(20,17,14,0.62);
+        border: 1px solid rgba(255,255,255,0.12); border-radius: 2px;
+        padding: 7px 13px; transition: all 0.18s ease;
+        backdrop-filter: blur(6px);
+      }
+      #timebar button:hover { border-color: var(--gold); color: #fff3d6; }
+      #timebar button.on {
+        background: rgba(232,196,105,0.16); border-color: var(--gold); color: #ffeec2;
+      }
+
+      /* ---------- Boot overlay ---------- */
+      #boot {
+        position: fixed; inset: 0; z-index: 40;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        background: radial-gradient(circle at 50% 42%, #241d18 0%, #0c0b0a 72%);
+        transition: opacity 0.9s ease;
+      }
+      #boot.hide { opacity: 0; pointer-events: none; }
+      #boot h2 {
+        font-size: 26px; letter-spacing: 12px; margin: 0 0 20px; color: #f2e0b0;
+        text-indent: 12px; font-weight: 500;
+      }
+      #boot .bar { width: 220px; height: 3px; background: rgba(255,255,255,0.12); overflow: hidden; }
+      #boot .bar i { display: block; height: 100%; width: 12%; background: var(--gold); transition: width 0.3s ease; }
+      #boot small { margin-top: 16px; font-size: 11.5px; letter-spacing: 3px; color: #8d8577; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="boot">
+      <h2>华夏古建</h2>
+      <div class="bar"><i id="bootbar"></i></div>
+      <small id="boottext">正在堆砌体素…</small>
+    </div>
+
+    <div class="hud" id="title">
+      <h1>体素古建群</h1>
+      <p>
+        中轴对称 · 前堂后塔<br />
+        山门 → 钟鼓楼 → 配殿 → 主殿 → 宝塔
+      </p>
+      <p class="poem">飞檐翘角，红墙金瓦，一砖一瓦皆体素。</p>
+    </div>
+
+    <div class="hud" id="legend">
+      <b>操作</b> &nbsp;<kbd>拖拽</kbd> 旋转 &nbsp;<kbd>滚轮</kbd> 缩放 &nbsp;<kbd>右键</kbd> 平移<br />
+      <b>时辰</b> &nbsp;<kbd>1</kbd> 晨曦 &nbsp;<kbd>2</kbd> 正午 &nbsp;<kbd>3</kbd> 黄昏<br />
+      <b>巡航</b> &nbsp;<kbd>R</kbd> 开 / 关 自动环绕
+    </div>
+
+    <div class="hud" id="stats">
+      <div>FPS <span id="fps">--</span></div>
+      <div>体素 <span id="vox">--</span></div>
+      <div>绘制 <span id="calls">--</span></div>
+    </div>
+
+    <div class="hud" id="timebar">
+      <button data-sky="dawn">晨曦</button>
+      <button data-sky="noon">正午</button>
+      <button data-sky="dusk" class="on">黄昏</button>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

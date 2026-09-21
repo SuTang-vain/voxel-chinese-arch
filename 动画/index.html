@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Halftone Flow · 半调流场</title>
+<style>
+  :root{
+    --ink:#0d0d0d;
+    --paper:#ffffff;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;overflow:hidden;background:var(--paper);}
+  body.invert{--ink:#f2f2f2;--paper:#0a0a0a;}
+  canvas{display:block;width:100vw;height:100vh;cursor:crosshair;}
+  .hud{
+    position:fixed;left:28px;bottom:22px;z-index:2;
+    font-family:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,"PingFang SC","Microsoft YaHei",monospace;
+    font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--ink);opacity:.55;user-select:none;pointer-events:none;
+    line-height:1.9;
+  }
+  .hud b{font-weight:600;opacity:1;}
+  .ratio{
+    position:fixed;right:28px;bottom:22px;z-index:2;
+    font-family:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-size:11px;letter-spacing:.22em;color:var(--ink);opacity:.55;
+    user-select:none;pointer-events:none;
+  }
+  body{transition:background .45s ease;}
+  .hud,.ratio{transition:color .45s ease;}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="hud"><b>HALFTONE FLOW</b> · 半调流场<br>移动鼠标扰动 · 点击反转墨色</div>
+<div class="ratio">21 : 9</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const TAU = Math.PI * 2;
+
+  let W = 0, H = 0, DPR = 1;
+  let spacing = 14, maxR = 6;
+
+  // 鼠标状态（平滑跟随）
+  const mouse = { x: -9999, y: -9999, sx: -9999, sy: -9999, active: false };
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    // 网格密度随屏宽自适应：21:9 超宽屏上约 170 列
+    spacing = Math.max(10, Math.min(18, W / 150));
+    maxR = spacing * 0.62;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  window.addEventListener('pointermove', e => {
+    mouse.x = e.clientX; mouse.y = e.clientY; mouse.active = true;
+  });
+  window.addEventListener('pointerleave', () => { mouse.active = false; });
+  window.addEventListener('click', () => {
+    document.body.classList.toggle('invert');
+  });
+
+  // ---- 流场定义 ----
+  // 蛇形中心线：两条不同频率/相速的正弦叠加，随时间向右流动
+  function centerY(x, t) {
+    const u = x / W;
+    return H * 0.5
+      + H * 0.185 * Math.sin(u * TAU * 1.05 - t * 0.85)
+      + H * 0.062 * Math.sin(u * TAU * 2.35 + t * 0.52 + 2.1);
+  }
+  // 粗细包络：慢速漂移，形成蛇身膨大/收缩的节奏
+  function thickness(x, t) {
+    const u = x / W;
+    const env = 0.5 + 0.5 * Math.sin(u * TAU * 1.55 - t * 0.5 + 1.3);
+    const env2 = 0.5 + 0.5 * Math.sin(u * TAU * 3.1 + t * 0.3 + 4.0);
+    return H * (0.055 + 0.115 * env + 0.03 * env2);
+  }
+
+  let t0 = performance.now();
+
+  function frame(now) {
+    const t = (now - t0) / 1000;
+
+    // 鼠标平滑（lerp 0.08，液体般响应）
+    if (mouse.active) {
+      if (mouse.sx < -999) { mouse.sx = mouse.x; mouse.sy = mouse.y; }
+      mouse.sx += (mouse.x - mouse.sx) * 0.08;
+      mouse.sy += (mouse.y - mouse.sy) * 0.08;
+    }
+
+    const styles = getComputedStyle(document.body);
+    ctx.fillStyle = styles.getPropertyValue('--paper').trim();
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = styles.getPropertyValue('--ink').trim();
+
+    const sigma = H * 0.16;
+    const inv2s2 = 1 / (2 * sigma * sigma);
+    const cols = Math.ceil(W / spacing) + 1;
+    const rows = Math.ceil(H / spacing) + 1;
+
+    ctx.beginPath();
+    for (let i = 0; i < cols; i++) {
+      const gx = i * spacing;
+      const cy = centerY(gx, t);
+      let th = thickness(gx, t);
+
+      // 鼠标影响：局部隆起 + 中心线被轻轻推开
+      for (let j = 0; j < rows; j++) {
+        const gy = j * spacing;
+        let yy = cy, tt = th;
+
+        if (mouse.active) {
+          const dx = gx - mouse.sx, dy = gy - mouse.sy;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < sigma * sigma * 9) {
+            const infl = Math.exp(-d2 * inv2s2);      // 高斯衰减
+            yy += (gy - mouse.sy) * infl * 0.45;       // 推开中心线
+            tt *= 1 + 0.55 * infl;                     // 局部膨胀
+          }
+        }
+
+        const q = 1 - Math.abs(gy - yy) / tt;
+        if (q <= 0) continue;
+        const r = maxR * Math.pow(q, 1.35);
+        if (r < 0.45) continue;
+        ctx.moveTo(gx + r, gy);
+        ctx.arc(gx, gy, r, 0, TAU);
+      }
+    }
+    ctx.fill();
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

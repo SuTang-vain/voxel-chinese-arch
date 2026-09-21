@@ -1,0 +1,15 @@
+# 依赖与构建产物
+node_modules/
+dist/
+dist-single/
+.vite/
+
+# macOS
+.DS_Store
+
+# 日志
+*.log
+
+# 04/ 顶层的本机运维底稿（pi 配置/会话清单，含个人路径，不入库）
+04/*.tsv
+04/pi-config-handoff-*.md
