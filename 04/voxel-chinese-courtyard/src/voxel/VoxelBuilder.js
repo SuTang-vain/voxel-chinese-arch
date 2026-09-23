@@ -238,7 +238,9 @@ export class VoxelBuilder {
     const group = new THREE.Group();
     group.name = 'voxel-world';
     const geo = new THREE.BoxGeometry(1, 1, 1);
-    const mats = makeMaterials();
+    // 复用模块级单例材质：setGlowIntensity/setWaterOpacity 改的就是这套对象，
+    // 若在此处重新 makeMaterials()，两者指向不同实例，灯笼自发光与水面降级都会失效
+    const mats = MATS;
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const pos = new THREE.Vector3();
@@ -278,7 +280,8 @@ function makeMaterials() {
   glow.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <emissivemap_fragment>',
-      '#include <emissivemap_fragment>\n\ttotalEmissiveRadiance *= vColor;'
+      // 注意：three 启用 instanceColor 时 varying vColor 是 vec4，必须取 .rgb
+      '#include <emissivemap_fragment>\n\ttotalEmissiveRadiance *= vColor.rgb;'
     );
   };
   const water = new THREE.MeshStandardMaterial({

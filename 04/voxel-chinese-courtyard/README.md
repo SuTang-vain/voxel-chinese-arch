@@ -24,7 +24,8 @@ npm run build
 npm run preview      # http://localhost:4173
 ```
 
-> 需求：Node.js ≥ 18。构建产物为纯静态文件（`dist/`），可放到任意静态服务器；
+> 需求：Node.js ≥ 20.19（或 ≥ 22.12，vite 7 的 engines 要求；README 旧版写的"≥ 18"不成立）。
+> 构建产物为纯静态文件（`dist/`），可放到任意静态服务器；
 > 由于使用 ES Module，直接双击 `dist/index.html`（file://）无法加载，请用 `npm run preview` 或任意 http 服务。
 
 **操作**：拖拽旋转 / 滚轮缩放 / 右键平移；`1` `2` `3` 切换晨曦·正午·黄昏；`R` 开关自动环绕。

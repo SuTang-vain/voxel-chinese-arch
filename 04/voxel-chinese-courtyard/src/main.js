@@ -25,7 +25,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'hi
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;   // PCFSoftShadowMap 已在 three r186 移除
 renderer.shadowMap.autoUpdate = false;      // 静态场景：按需重算
 renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.toneMappingExposure = 1.08;
@@ -80,8 +80,8 @@ let lastTouch = -1e9;        // 最近一次用户操作时间
 let intro = { t: 0, dur: 7.5, played: false };
 
 const spherical = new THREE.Spherical();
-controls.addEventListener('start', () => { lastTouch = clock.elapsedTime; });
-controls.addEventListener('end', () => { lastTouch = clock.elapsedTime; });
+controls.addEventListener('start', () => { lastTouch = timer.getElapsed(); });
+controls.addEventListener('end', () => { lastTouch = timer.getElapsed(); });
 
 document.querySelectorAll('#timebar button').forEach((btn) => {
   btn.addEventListener('click', () => selectSky(btn.dataset.sky));
@@ -108,7 +108,7 @@ addEventListener('resize', () => {
 });
 
 /* ───────────── 帧循环 ───────────── */
-const clock = new THREE.Clock();
+const timer = new THREE.Timer();   // THREE.Clock 已废弃
 const fpsEl = document.getElementById('fps');
 const voxEl = document.getElementById('vox');
 const callsEl = document.getElementById('calls');
@@ -119,8 +119,9 @@ let perfSamples = 0, perfAcc = 0, degraded = 0;
 
 function animate() {
   requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.1);
-  const now = clock.elapsedTime;
+  timer.update();   // Timer 需每帧先 update 再取 delta
+  const dt = Math.min(timer.getDelta(), 0.1);
+  const now = timer.getElapsed();
 
   // 开场：由高空缓缓推进到全景
   if (!intro.played) {
