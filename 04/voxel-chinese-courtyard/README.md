@@ -13,7 +13,9 @@
 # 1. 安装依赖（仅 three + vite）
 npm install
 
-# 2. 自检（不需要浏览器，约 0.8 秒；退出码 0 = 全绿，1 = 断言失败）
+# 2. 自检（约 8 秒；退出码 0 = 全绿，1 = 断言失败）
+#    · 无 Chrome 环境自动跳过 render-smoke（SKIP 不计失败），其余约 0.8 秒
+#    · VCC_SKIP_RENDER=1 可显式跳过渲染断言
 npm run selftest
 
 # 3. 开发模式（默认 http://localhost:5173，自动打开浏览器）
@@ -118,8 +120,11 @@ src/
 
 ## 四、自检：可被检验的完成定义
 
-`npm run selftest`（`scripts/selftest.mjs`，无需浏览器，约 0.8 秒；退出码 0 = 全绿）把"我认为做完了"换成"什么必须为真"。
+`npm run selftest`（`scripts/selftest.mjs`，约 0.8 秒；有 Chrome 时追加 `render-smoke` 约 8 秒；退出码 0 = 全绿）把"我认为做完了"换成"什么必须为真"。
 它走的是**与渲染完全同一条装配流水线**（`src/scene/assemble.js`），因此测的就是要跑的东西。
+最后一条 `render-smoke` 例外——它故意**不走**这条流水线，而是起无头 Chrome 打开 `dist/` 构建产物，
+把 WebGL 渲染产物本身（shader 编译、program 健康度、自发光传导、GL 错误码、console）变成可机检事实，
+专门堵前 17 条覆盖不到的盲区（见下文第 19 条）。
 
 | 断言 | 陈述（必须为真） |
 | --- | --- |
@@ -140,6 +145,7 @@ src/
 | `wall-intact` | **围墙不得被后来的构件侵占**：东西墙、后墙、前墙两段的每一列（y=1..8）都必须是墙自身的色卡（`wallRed/wallRed2/brick/tileGray/tileGray2`），**且压顶外挑一圈（y=7..8）不得被任何非自然物占用**（檐角/翘角伸过来也算）；掖门门洞与山门台基相接段按注释口径剔除 |
 | `walk-paths-clear` | **院墙边甬道必须畅通**：四段带子（沿东西院墙各 3 格宽、塔院入口两段横向连接）逐格核对 —— y=1 必须是铺装、上方不得有非自然物（**树冠遮荫不计**），且每段各自首尾 4-连通（随机林木不得长在路上） |
 | `noon-shadow-north` | **日轨必须在南半空间**：晨曦/正午/黄昏三个预设的 `dirOf().z` 都 > 0（否则正午阴影朝南，北半球反了）、正午最偏南且最高、晨曦与黄昏分居东西（太阳横穿天空），且正午阴影（−dir）必须朝北 |
+| `render-smoke` | **渲染产物本身必须是真的**（唯一需要浏览器的一条；无 Chrome 则 SKIP，不计失败）：起无头 Chrome 打开 `dist/`，断言 ① 无 console 错误/未捕获异常；② `renderer.info.programs` 全部 `runnable`（**没有 shader 编译失败**）；③ `gl.getError() === 0`；④ `glow` 材质 `emissiveIntensity > 0`（`setGlowIntensity` 真的传到了网格，而不是传给了另一个材质对象）；⑤ draw call 与三角形数 > 0；⑥ 渲染可见体素数 === 装配流水线的 `stats.visible`。注入探针用 page 级 console 钩子，避免把 favicon 404 之类网络层日志误判为页面错误 |
 
 **它真的抓到过东西**（都是截图上看不出来的，按发现顺序）：
 
@@ -159,6 +165,10 @@ src/
 16. **亭檐翘角仍会碰墙**（推到 z0=-101 时被 `wall-intact` 当场拦住）：裕量必须按**檐角**算 —— 后墙压顶外挑 1 格 + 亭檐翘角再挑 2 格（`reach:2`），故北沿只能到 z=-102、`z0 ≤ -99`。碑亭现取 `x[-19,-15] z[-99,-95]`（用户要求放回院北两角空地），松柏随之改到南两角 + 东西两侧中点；
 17. **甬道被画进后墙 / 树冠被误判为阻塞**：塔院两侧新增“沿墙甬道 + 入口连接段 + 松林”后，`walk-paths-clear` 第一次运行就报 `(-53,1,-104) 是 wallRed`（北端画到了后墙那一行）⇒ 收到 z=-103；接着又报 `(-53,3,-96) 被 leaf2 占` —— 那是树冠搭在路**上方**（自然，允许）⇒ 口径改为“只禁非自然物”，树干长在路上会直接毁掉 y=1 铺装、由第一句拦下。随后按用户反馈把两侧林改为**稀疏随机**：局部固定种子 RNG 撒点（不动公共 rnd 序列）+ 最小间距 9 格 + `onBuilt` 避障 + **松/阔混搭**（每侧 7 株，树冠量从各 ~1,700 格降到 ~800 格）。再按用户反馈二次稀疏：每侧 4 株、最小间距 12 格，树冠量 480 / 384 格。
 18. **正午阴影朝南（= 北半球反了）**：`SkyRig.dirOf` 把 z 写成 `+cos(el)cos(az)`，将整条日轨镜像到北半空间 —— 正午 `az=205/el=62` 算出 `z=-0.425` ⇒ 太阳在北边 ⇒ 阴影朝南。用户只注意到正午（黎明/黄昏 z 仅 ∓0.22，东西向主导，看着“还行”）。修法是**一个符号**（`-cos`）：修改后晨曦 `z=+0.22`（日出偏南）、正午 `z=+0.43`（最偏南）、黄昏 `z=+0.23`（日落偏西）；由于天穹日晕/太阳圆盘/平行光共用此向量，一处生效。新增 `noon-shadow-north` 把“日轨在南半空间”变成可机检事实。
+19. **17/17 全绿，但灯笼是坏的**（2026-09-23 发布前复验时发现）：两个 P0 都只坏在 **WebGL 渲染产物**上，而前 17 条断言只覆盖装配流水线的体素数据 ⇒ 数据一个不少、断言全绿、画面上灯笼整个消失。
+    - **P0-1 shader 编译失败**：`onBeforeCompile` 注入 `totalEmissiveRadiance *= vColor`，而 three 0.186 启用 `instanceColor`（`USE_INSTANCING_COLOR`）时 `varying vColor` 是 **vec4** ⇒ `vec3 *= vec4` GLSL 编译失败 ⇒ glow 材质批次整体不渲染，控制台持续 `Shader Error` + `useProgram: program not valid`。修法：取 `vColor.rgb`。
+    - **P0-2 自发光强度传不到网格**：`toObject3D()` 内 `const mats = makeMaterials()` **每次调用新建一套材质**，而 `setGlowIntensity()` 每帧改的是模块级 `MATS` —— 两者不是同一对象 ⇒ 灯笼 `emissiveIntensity` 恒 0，永远不亮（`setWaterOpacity` 同样失效，只是暂无调用点）。修法：复用 `MATS` 单例。
+    ⇒ 新增 `render-smoke`：起无头 Chrome 打开 `dist/`，把 shader 编译、program 健康度、`emissiveIntensity` 传导、`gl.getError()`、console 变成可机检事实。这与本文档对 `cull-safety` 的自我批评是同一条：**自算一遍 ≠ 渲染路径真的如此**。
 
 **验证它有牙齿**（故障注入，每次都在改动之后复验）：
 
@@ -179,6 +189,9 @@ src/
 | 碑亭再往北推 2 格（檐角翘角碰压顶外挑） | `wall-intact` 失败 | 1 / `围墙 footprint 被侵占：(-22,8,-104) 是 ridgeGray | (-20,8,-104) 是 gold | (-14,8,-104) 是 gold | …` |
 | 一棵树干塞在西侧甬道上（x=-52, z=-20） | `walk-paths-clear` 失败 | 1 / `1 项失败：西侧沿墙 被阻 1 格：(-52,1,-20) 是 trunk` |
 | 把 `dirOf` 的 z 符号改回 `+cos(el)cos(az)`（= 用户报的“阴影相反”本身） | `noon-shadow-north` 失败 | 5 / `dawn 太阳偏北（z=-0.221，应为正）—— 阴影会朝南；noon 太阳偏北（z=-0.425…）；dusk 太阳偏北（z=-0.231…）；正午不是最偏南的预设；正午阴影不朝北（−dir.z=0.425）` |
+| 把 `vColor.rgb` 改回 `vColor`（= P0-1 本身） | `render-smoke` 失败，其余 17 条仍绿 | 1 / `console 错误 1 条：THREE.WebGLProgram: Shader Error 0 - VALIDATE_STATUS false` |
+| 把 `const mats = MATS` 改回 `makeMaterials()`（= P0-2 本身） | `render-smoke` 失败，其余 17 条仍绿 | 1 / `glow emissiveIntensity=0 —— setGlowIntensity 没传到网格（材质对象被换掉）` |
+| `VCC_SKIP_RENDER=1` 或 dist/ 缺失 | `render-smoke` 记 SKIP（不计失败） | 0 / `18/18 通过（实跑 17 条，跳过 1 条）` |
 
 > 该命令同时是 subagent 的 `gate`：任何改动本仓库的子 agent 都必须让它跑通并在 `commandsRun` 里留痕。
 > 已知残余弱点：`BASELINE` 本身不受该断言保护（改基线则阈值整体跟随），保护手段是 git diff 与绿日志里打印的基线值。
@@ -194,10 +207,25 @@ src/
 | 三角形 | ≈ 86 万 |
 | 单帧渲染（含阴影采样） | 修复前 **6.0 / 6.3 / 8.7 / 9.2 ms**（四轮独立测量，默认全景机位）；修完屋面/飞檐/水池各版本的同环境实测中位数落在 **4.8–7.7 ms**（min 4.5 / max 23.1，pixelRatio 1.75）—— 注：单帧值随测量机位与后台负载波动，只有同机位对照才有意义 |
 | 场景构建（装配 + 合批） | 45–100 ms |
-| 自检 | **17/17 通过、退出码 0**（约 0.8 s，无需浏览器） |
+| 自检 | **18/18 通过、退出码 0**（约 8 s，含无头 Chrome 渲染断言；无 Chrome 时 17 条实跑 + 1 条 SKIP） |
 
 > 说明：HUD 的 FPS 在窗口失焦/后台标签会被浏览器节流，不作为结论依据；上表为 `renderer.render()` 循环 + `readPixels` 同步实测。
 > 本仓库已纳入 git（`npm run selftest` 为 gate），改动报告应附 `git rev-parse --short HEAD` 与干净的 `git status`。
+
+## 六、发布
+
+线上地址：**https://sutang-vain.github.io/voxel-chinese-arch/04/**（GitHub Pages，`gh-pages` 分支 `/04/` 子路径）
+
+```bash
+npm run build          # 产出 dist/（18 modules → 2 文件，808K，JS gzip 213K）
+# dist/ 为纯静态产物：base:'./' 全相对路径，零外部依赖，可放任意静态托管
+```
+
+- `vite.config.js` 用 `base: './'` ⇒ 构建产物可挂在**任意子路径**（本仓库即 `/04/`，与根目录的 03 项目共存）
+- 无需后端、无路由、无环境变量；ES Module ⇒ 必须经 http(s) 访问，`file://` 不行
+- 部署方式：`dist/` 推到 `gh-pages` 分支即可（本仓库用 legacy Pages，无 CI）；也可用 Netlify / Vercel / Cloudflare Pages / OSS+CDN
+- 服务端建议开 gzip/brotli（JS 213K ⇒ 传输量降约 74%）
+- Node 要求：`^20.19.0 || >=22.12.0`（vite 7 的 engines）
 
 **调试入口**：控制台可用 `window.__vcc` 访问 `{ THREE, scene, camera, controls, renderer, sky, stats }`，
 例如 `__vcc.controls.autoRotate = false` 暂停巡航。

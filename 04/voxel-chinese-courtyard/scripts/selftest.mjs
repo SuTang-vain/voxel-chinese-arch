@@ -15,6 +15,13 @@ import { hipRoof, xieshanRoof, pyramidRoof, skirtRoof, octRoof } from '../src/vo
 import { assembleWorld } from '../src/scene/assemble.js';
 import { LAYOUT } from '../src/scene/layout.js';
 import { PALETTE } from '../src/voxel/palette.js';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /* ────────────── 断言框架 ────────────── */
 const results = [];
@@ -938,16 +945,157 @@ check(
   }
 );
 
+/* ────────────── 17. 渲染证据（render-smoke） ────────────── */
+/**
+ * 由来（2026-09-23）：两个 P0 在 17/17 全绿的情况下发布，
+ * 因为它们只坏在 **WebGL 渲染产物**上，而前 17 条断言只覆盖装配流水线的体素数据。
+ *
+ *   1. `onBeforeCompile` 注入的 `totalEmissiveRadiance *= vColor` —— three 0.186 启用
+ *      instanceColor 时 `vColor` 是 **vec4**，vec3 *= vec4 ⇒ GLSL 编译失败，
+ *      灯笼（glow）材质批次整个不渲染。体素数据一个不少，17 条全绿。
+ *   2. `toObject3D()` 内 `makeMaterials()` 每次新建材质，`setGlowIntensity()`
+ *      改的是模块级 `MATS` ⇒ 灯笼 emissiveIntensity 恒 0。同样全绿。
+ *
+ * 这与 README 对 `cull-safety` 的自我批评是同一条：**自算一遍 ≠ 渲染路径真的如此**。
+ * 因此这里把「渲染产物」本身变成可机检事实：起无头 Chrome 打开构建产物，
+ * 收集 console/异常 + three 的 program 诊断 + 自发光强度传导 + GL 错误码。
+ *
+ * 环境无 Chrome/Chromium 时记为 **skipped**（不计失败、不影响退出码），
+ * 保证任何环境都能跑自检；`VCC_SKIP_RENDER=1` 可显式跳过。
+ */
+const RENDER_CLAIM =
+  '构建产物在真实 WebGL 下：无 console 错误/未捕获异常、program 全部 runnable（无 shader 编译失败）、' +
+  'gl.getError() 为 0、自发光强度真的传到 glow 网格（setGlowIntensity 生效）、且渲染调用数与体素数与装配流水线一致';
+
+// 探针：注入到被服务的 index.html 里，跑完后把结果 POST 回自检进程。
+// 用 page 级 console/uncaught 钩子而非浏览器 Log，避免把 favicon 404 之类
+// 的网络层日志算成页面错误。
+const PROBE = `
+<script>
+(() => {
+  const errs = [];
+  const ce = console.error.bind(console);
+  console.error = (...a) => { errs.push(a.map(String).join(' ')); ce(...a); };
+  addEventListener('error', (e) => errs.push('uncaught: ' + (e.message || (e.error && e.error.message) || e.error)));
+  addEventListener('unhandledrejection', (e) => errs.push('unhandledrejection: ' + (e.reason && e.reason.message || e.reason)));
+  const post = (body) => fetch('/__vcc_report__', { method: 'POST', body: JSON.stringify(body) }).catch(() => {});
+  (async () => {
+    for (let i = 0; i < 600; i++) {
+      if (typeof window.__vcc !== 'undefined' && !document.getElementById('boot')) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (typeof window.__vcc === 'undefined') { post({ fatal: 'window.__vcc 未就绪：装配失败或启动超时', errs }); return; }
+    await new Promise((r) => setTimeout(r, 3000));   // 让渲染循环跑几帧，setGlowIntensity 至少执行一次
+    try {
+      const v = window.__vcc, info = v.renderer.info;
+      const broken = [];
+      info.programs.forEach((p, i) => {
+        if (p.diagnostics && !p.diagnostics.runnable) broken.push('#' + i + ' ' + String(p.diagnostics.programLog || '').slice(0, 160));
+      });
+      const glow = v.voxelGroup.children.find((c) => c.material && c.material.emissive && c.material.emissive.getHexString() === 'ffffff');
+      post({
+        errs,
+        programs: info.programs.length, broken,
+        calls: info.render.calls, triangles: info.render.triangles,
+        glError: v.renderer.getContext().getError(),
+        glowInstances: glow ? glow.count : 0,
+        glowEmissiveI: glow ? glow.material.emissiveIntensity : null,
+        visible: v.stats.visible, total: v.stats.total,
+      });
+    } catch (e) { post({ fatal: String((e && e.stack) || e), errs }); }
+  })();
+})();
+</script>
+`;
+
+async function renderSmoke() {
+  const t0 = performance.now();
+  const done = (ok, detail) => ({ ok, detail, ms: +(performance.now() - t0).toFixed(1) });
+  const skip = (why) => ({ ok: true, skipped: true, detail: why, ms: +(performance.now() - t0).toFixed(1) });
+
+  if (process.env.VCC_SKIP_RENDER) return skip(`已跳过（VCC_SKIP_RENDER=${process.env.VCC_SKIP_RENDER}）`);
+
+  const distDir = fileURLToPath(new URL('../dist/', import.meta.url));
+  if (!existsSync(join(distDir, 'index.html'))) return skip('dist/ 不存在 —— 先 npm run build 即可启用本断言');
+
+  // 找浏览器
+  let bin = null;
+  for (const b of ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', '/usr/bin/google-chrome', '/snap/bin/chromium']) {
+    try { if (spawnSync(b, ['--version'], { stdio: 'ignore' }).status === 0) { bin = b; break; } } catch { /* 下一个 */ }
+  }
+  if (!bin) return skip('未找到 Chrome/Chromium —— 渲染证据缺失（不阻塞自检，但发布前应手动验证）');
+
+  let report = null;
+  const server = createServer(async (req, res) => {
+    const u = new URL(req.url, 'http://127.0.0.1');
+    if (req.method === 'POST' && u.pathname === '/__vcc_report__') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => { try { report = JSON.parse(body); } catch { /* 由超时兜底 */ } res.writeHead(200).end('ok'); });
+      return;
+    }
+    const rel = (u.pathname === '/' ? '/index.html' : u.pathname).replace(/\.\./g, '');
+    try {
+      const data = await readFile(join(distDir, rel));
+      const html = rel.endsWith('.html');
+      res.writeHead(200, { 'content-type': html ? 'text/html; charset=utf-8' : 'application/javascript' });
+      res.end(html ? data.toString('utf8').replace('</body>', `${PROBE}</body>`) : data);
+    } catch { res.writeHead(404).end('not found'); }
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+
+  const profile = join(tmpdir(), `vcc-smoke-${process.pid}-${Date.now()}`);
+  const child = spawn(bin, [
+    '--headless=new', '--no-sandbox', '--disable-dev-shm-usage',
+    '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader',
+    `--remote-debugging-port=${port + 1}`, `--user-data-dir=${profile}`,
+    '--window-size=1280,800', `http://127.0.0.1:${port}/`,
+  ], { stdio: 'ignore', detached: true });
+
+  const deadline = Date.now() + 120000;
+  try {
+    while (!report && Date.now() < deadline) await new Promise((r) => setTimeout(r, 500));
+  } finally {
+    try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* 已退出 */ } }
+    server.close();
+    rmSync(profile, { recursive: true, force: true });
+  }
+
+  if (!report) return done(false, `无头 Chrome 未在 120 s 内回报（页面未启动或装配卡住）；bin=${bin}`);
+  if (report.fatal) return done(false, `${report.fatal}${report.errs?.length ? `｜console: ${report.errs.slice(0, 3).join(' / ')}` : ''}`);
+
+  const bad = [];
+  if (report.errs?.length) bad.push(`console 错误 ${report.errs.length} 条：${report.errs.slice(0, 2).join(' / ').slice(0, 200)}`);
+  if (report.broken?.length) bad.push(`shader 编译失败 ${report.broken.length}/${report.programs}：${report.broken[0].slice(0, 160)}`);
+  if (report.glError) bad.push(`gl.getError()=${report.glError}`);
+  if (!(report.calls > 0)) bad.push(`渲染调用数为 ${report.calls}（画面没画出来）`);
+  if (!(report.triangles > 0)) bad.push(`三角形数为 ${report.triangles}`);
+  if (!(report.glowEmissiveI > 0)) bad.push(`glow emissiveIntensity=${report.glowEmissiveI} —— setGlowIntensity 没传到网格（材质对象被换掉）`);
+  if (!(report.glowInstances > 0)) bad.push(`glow 批次实例数 ${report.glowInstances}`);
+  if (report.visible !== built.stats.visible) bad.push(`渲染可见体素 ${report.visible} ≠ 装配 ${built.stats.visible}`);
+
+  return done(bad.length === 0, bad.length
+    ? bad.join('；')
+    : `${fmt(report.total)} 体素 / 可见 ${fmt(report.visible)} · program ${report.programs}/${report.programs} runnable · `
+      + `glow ${report.glowInstances} 格 emissive=${report.glowEmissiveI} · draw call ${report.calls} · 三角形 ${fmt(report.triangles)} · gl.error 0 · console 0 条`);
+}
+
+results.push({ name: 'render-smoke', claim: RENDER_CLAIM, ...(await renderSmoke()) });
+
 /* ────────────── 输出 ────────────── */
 const failed = results.filter((r) => !r.ok);
 const pad = (s, n) => (s.length >= n ? s : s + ' '.repeat(n - s.length));
 
 console.log(`\n体素场景自检 · 装配 ${buildMs} ms · ${fmt(blocks.length)} 体素\n${'─'.repeat(78)}`);
 for (const r of results) {
-  console.log(`${r.ok ? '  PASS' : '  FAIL'}  ${pad(r.name, 20)} ${r.detail}`);
+  const tag = r.skipped ? '  SKIP' : (r.ok ? '  PASS' : '  FAIL');
+  console.log(`${tag}  ${pad(r.name, 20)} ${r.detail}`);
 }
 console.log('─'.repeat(78));
-console.log(`${results.length - failed.length}/${results.length} 通过${failed.length ? ` —— 失败：${failed.map((f) => f.name).join(', ')}` : ' —— 全部断言为真'}`);
+const ran = results.filter((r) => !r.skipped);
+console.log(`${results.length - failed.length}/${results.length} 通过${failed.length ? ` —— 失败：${failed.map((f) => f.name).join(', ')}` : ' —— 全部断言为真'}`
+  + `（实跑 ${ran.length} 条，跳过 ${results.length - ran.length} 条）`);
 console.log(`\n检查清单（这些都是必须为真的陈述）：`);
 for (const r of results) console.log(`  · [${r.ok ? 'x' : ' '}] ${r.claim}`);
 
