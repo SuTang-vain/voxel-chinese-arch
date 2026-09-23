@@ -5,10 +5,11 @@ Minecraft 体素块风格的中式古典建筑群 3D 场景，纯 Three.js 实�
 ## 运行方式
 
 ```bash
-npm install        # 安装依赖（three + vite）
-npm run dev        # 开发模式，默认 http://localhost:5173
-npm run build      # 生产构建，输出 dist/
-npm run preview    # 预览生产构建
+npm install           # 安装依赖（three + vite + vite-plugin-singlefile）
+npm run dev           # 开发模式，默认 http://localhost:5173
+npm run build         # 生产构建，输出 dist/
+npm run build:single  # 单文件构建，输出 dist-single/index.html（双击即开）
+npm run preview       # 预览生产构建
 ```
 
 页面打开即进入场景：相机缓慢自动环绕展示全貌，点击拖拽后即交还控制
@@ -46,10 +47,32 @@ npm run preview    # 预览生产构建
     斗拱层（双层交错小斗）、门（带门楣横披窗）、直棂窗
 - **光影**：`PCFSoftShadowMap` + ACES 色调映射；方向光 `normalBias` 消除体素阴影痤疮。
 
+## 发布
+
+产物是**纯静态**的：`src/` 与 `index.html` 中没有任何外部请求（无 CDN、无 Web 字体、
+无 API、无后端、无环境变量），`dist/` 上传即用，也可离线或部署在内网。
+
+`vite.config.js` 设 `base: './'`，产物以**相对路径** `./assets/*` 引用资源，
+因此三种发布形态都可用（均已实测）：
+
+| 形态 | 命令 | 说明 |
+|---|---|---|
+| 静态托管 · 根路径 | `npm run build` | Vercel / Netlify / 对象存储根目录，dist 内容直接作 webroot |
+| 静态托管 · 任意子路径 | `npm run build` | GitHub Pages 项目页、Nginx `location /voxel/`、OSS 子目录 —— 相对路径不会 404 |
+| 单文件分发 | `npm run build:single` | 产出 1 个约 506 kB 的 `dist-single/index.html`，**双击即开**（无 ES module 跨域限制），可微信 / 邮件传 |
+
+> 注意：ES module 在 `file://` 下会被 CORS 拦截，所以普通 `dist/` 不能直接双击打开，
+> 需要免服务器分发时请用 `build:single`。
+
+健壮性：页面带启动占位层；WebGL 初始化失败或上下文丢失时会给出可读的中文提示
+而不是一块纯灰；已内置内联 SVG favicon 与 og / description 元信息。
+
 ## 项目结构
 
 ```
-├── index.html          # 入口页面（HUD + FPS 计数）
+├── index.html              # 入口页面（HUD + FPS 计数 + 启动占位 + 降级提示）
+├── vite.config.js          # base:'./' 相对路径，支持任意子路径部署
+├── vite.single.config.js   # 单文件构建（JS/CSS 全内联）
 ├── package.json
 └── src/
     ├── main.js         # 渲染器 / 相机 / 灯光 / 晨昏天空 / 主循环
@@ -61,6 +84,10 @@ npm run preview    # 预览生产构建
 
 ## 实测运行结果
 
-- `npm run build` 通过（Vite 6，产物 gzip ≈127 kB）
-- dev server 实测：15,364 体素，稳定 **58–61 FPS**，阴影与自发光灯笼正常
-- 已用无头浏览器截图核验：中轴正立面、主殿特写、环绕视角构图均正确
+- `npm run build` 通过（Vite 6，`dist/` 产物 gzip ≈128 kB）；
+  `npm run build:single` 产出单文件 `dist-single/index.html`（506 kB / gzip 130 kB）
+- dev server 实测：15,364 体素，33 个 InstancedMesh 分组，稳定 **58–61 FPS**，阴影与自发光灯笼正常
+- 已用无头浏览器截图核验：中轴正立面、主殿特写、环绕视角构图均正确；
+  根路径 / 子路径 / `file://` 单文件三种发布形态均实测可渲染
+- 修复记录：原先缺 `vite.config.js`，Vite 默认 `base:'/'` 生成绝对路径 `/assets/*`，
+  导致部署到任意子路径或用 `file://` 打开时白屏；现已改为相对路径并补单文件构建

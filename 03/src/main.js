@@ -4,9 +4,33 @@ import { VoxelWorld } from './voxel.js';
 import { buildScene } from './scene.js';
 import { P } from './palette.js';
 
+/* ---------- 启动占位 / 降级提示 ---------- */
+const bootEl = document.getElementById('boot');
+const bootMsg = document.getElementById('boot-msg');
+const bootHint = document.getElementById('boot-hint');
+/** WebGL 初始化失败等致命错误：把占位层改写成人话，避免用户只看到一块纯灰 */
+function fatal(msg, hint) {
+  if (!bootEl) return;
+  bootEl.classList.add('fatal');
+  bootEl.classList.remove('done');
+  if (bootMsg) bootMsg.textContent = msg;
+  if (bootHint) bootHint.textContent = hint;
+}
+/** 首帧渲染完成后淡出占位层 */
+function bootDone() {
+  if (bootEl) bootEl.classList.add('done');
+}
+
 /* ---------- 渲染器 ---------- */
 const app = document.getElementById('app');
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+} catch (err) {
+  fatal('无法初始化 WebGL', '请使用较新版本的 Chrome / Edge / Firefox / Safari，并在浏览器设置中开启「硬件加速」后重试；若仍失败，可能是当前设备或虚拟机环境不支持 WebGL。');
+  console.error('[voxel] WebGLRenderer 初始化失败：', err);
+  throw err;
+}
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -14,6 +38,13 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 app.appendChild(renderer.domElement);
+
+// 上下文丢失（移动端切应用、显存不足、GPU 进程重置时会出现）→ 黑屏，给出可恢复提示
+renderer.domElement.addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();
+  fatal('WebGL 上下文丢失', '显卡进程被系统重置（常见于移动端切换应用或显存不足）。刷新页面即可重新加载场景。');
+});
+renderer.domElement.addEventListener('webglcontextrestored', () => location.reload());
 
 /* ---------- 场景 / 晨昏天空 ---------- */
 const scene = new THREE.Scene();
@@ -86,10 +117,12 @@ setInterval(() => {
 }, 1000);
 
 /* ---------- 主循环 ---------- */
+let firstFrame = true;
 renderer.setAnimationLoop(() => {
   controls.update();
   renderer.render(scene, camera);
   frames++;
+  if (firstFrame) { firstFrame = false; bootDone(); }   // 首帧出图即撤掉占位层
 });
 
 window.addEventListener('resize', () => {
